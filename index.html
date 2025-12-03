@@ -105,7 +105,7 @@ Bob: 1,5; tumble: yes
   <div id="results"></div>
 
   <script>
-    const STORAGE_KEY = 'rapperSchedulerConfigV3';
+    const STORAGE_KEY = 'rapperSchedulerConfigV4';
 
     function loadConfig() {
       try {
@@ -132,7 +132,7 @@ Bob: 1,5; tumble: yes
       }
     }
 
-    // NEW: simple tumble: yes/no
+    // Parse lines like: "Dan: 1,2,3; tumble: yes"
     function parseDancers(text) {
       const lines = text.split('\n')
         .map(l => l.trim())
@@ -141,7 +141,6 @@ Bob: 1,5; tumble: yes
       const dancers = [];
 
       for (const line of lines) {
-        // Split at ; tumble:
         const parts = line.split(';');
         const mainPart = parts[0] || '';
         const tumblePart = parts.slice(1).join(';').toLowerCase();
@@ -169,8 +168,10 @@ Bob: 1,5; tumble: yes
               tumblePart.includes('y')) {
             canTumble = true;
           }
-        } else if (tumblePart.includes('yes') || tumblePart.includes('true') || tumblePart.includes('y')) {
-          // if user forgets "tumble:" label and just writes "; yes"
+        } else if (tumblePart.includes('yes') ||
+                   tumblePart.includes('true') ||
+                   tumblePart.includes('y')) {
+          // if they just wrote "; yes"
           canTumble = true;
         }
 
@@ -185,6 +186,7 @@ Bob: 1,5; tumble: yes
       return dancers;
     }
 
+    // NEW LOGIC: share out dances first, tumble second
     function generateSchedule(dancers, numDances) {
       const numPositions = 5;
       const schedule = [];
@@ -194,8 +196,7 @@ Bob: 1,5; tumble: yes
         const usedThisDance = new Set();
 
         for (let pos = 1; pos <= numPositions; pos++) {
-          // Eligible: can do this position and not already used in this dance
-          let eligible = dancers.filter(person =>
+          const eligible = dancers.filter(person =>
             person.positions.includes(pos) && !usedThisDance.has(person.name)
           );
 
@@ -204,22 +205,21 @@ Bob: 1,5; tumble: yes
             continue;
           }
 
-          // For 1,3,5 prefer tumblers if any exist
-          let candidatePool = eligible;
-          if ([1, 3, 5].includes(pos)) {
-            const tumbleEligible = eligible.filter(p => p.canTumble);
-            if (tumbleEligible.length > 0) {
-              candidatePool = tumbleEligible;
-            }
-          }
-
-          // Fairness: fewest dances so far, then name
-          candidatePool.sort((a, b) => {
+          // Fairness first: fewest dances so far
+          // If tied and this is a tumble position, prefer tumblers
+          eligible.sort((a, b) => {
             if (a.count !== b.count) return a.count - b.count;
+
+            if ([1, 3, 5].includes(pos) && a.canTumble !== b.canTumble) {
+              // tie on count: tumblers first in 1/3/5
+              return a.canTumble ? -1 : 1;
+            }
+
+            // final tie-break: name
             return a.name.localeCompare(b.name);
           });
 
-          const chosen = candidatePool[0];
+          const chosen = eligible[0];
           dance[pos] = chosen.name;
           chosen.count++;
           usedThisDance.add(chosen.name);
