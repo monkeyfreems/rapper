@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rapper Dance Scheduler</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#ffffff">
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 20px;
+      max-width: 900px;
+    }
+    h1 {
+      font-size: 1.4rem;
+      margin-bottom: 0.4rem;
+    }
+    h2 {
+      font-size: 1.1rem;
+      margin-top: 1.4rem;
+    }
+    textarea, input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px;
+      margin: 4px 0 10px 0;
+      font-size: 0.9rem;
+    }
+    label {
+      font-weight: 600;
+      display: block;
+      margin-top: 10px;
+      font-size: 0.95rem;
+    }
+    button {
+      padding: 8px 14px;
+      cursor: pointer;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      background: #f5f5f5;
+      font-weight: 600;
+      margin-top: 6px;
+      font-size: 0.95rem;
+    }
+    table {
+      border-collapse: collapse;
+      margin-top: 16px;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 6px 8px;
+      text-align: center;
+    }
+    th {
+      background: #f0f0f0;
+    }
+    .counts-table {
+      width: auto;
+    }
+    .warning {
+      color: #b00;
+      font-weight: 600;
+      margin-top: 8px;
+      font-size: 0.9rem;
+    }
+    .small {
+      font-size: 0.8rem;
+      color: #555;
+    }
+    code {
+      background: #f5f5f5;
+      padding: 2px 4px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Rapper Dance Scheduler</h1>
+  <p class="small">
+    Format (per line):<br>
+    <code>Name: positions; tumble: tumble-positions</code><br>
+    Example:<br>
+    <code>Dan: 1,2,3,4,5; tumble: 1,3,5</code><br>
+    <code>Alice: 2,3; tumble: 3</code><br>
+    Tumble positions can only be 1, 3 or 5.
+  </p>
+
+  <label for="dancersInput">Dancers, positions and tumble ability</label>
+  <textarea id="dancersInput" rows="10" placeholder="Dan: 1,2,3,4,5; tumble: 1,3,5
+Alice: 2,3; tumble: 3
+Bob: 1,4
+..."></textarea>
+
+  <label for="numDances">Number of dances</label>
+  <input id="numDances" type="number" min="1" value="6">
+
+  <button id="generateBtn">Generate schedule</button>
+
+  <div id="message" class="warning"></div>
+
+  <div id="results"></div>
+
+  <script>
+    const STORAGE_KEY = 'rapperSchedulerConfigV2';
+
+    function loadConfig() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (data.dancersText) {
+          document.getElementById('dancersInput').value = data.dancersText;
+        }
+        if (data.numDances) {
+          document.getElementById('numDances').value = data.numDances;
+        }
+      } catch (e) {
+        // ignore corrupt data
+      }
+    }
+
+    function saveConfig(dancersText, numDances) {
+      const data = {
+        dancersText,
+        numDances
+      };
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      } catch (e) {
+        // storage might be full / disabled; not critical
+      }
+    }
+
+    function parseDancers(text) {
+      const lines = text.split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0);
+
+      const dancers = [];
+
+      for (const line of lines) {
+        // Split into "main" and "tumble" parts
+        const semiParts = line.split(';');
+        const mainPart = semiParts[0] || '';
+        const tumblePart = semiParts.slice(1).join(';'); // in case of extra ';'
+
+        const mainPieces = mainPart.split(':');
+        if (mainPieces.length < 2) continue;
+
+        const name = mainPieces[0].trim();
+        const posPart = mainPieces[1].trim();
+
+        if (!name || !posPart) continue;
+
+        const positions = posPart
+          .split(',')
+          .map(p => p.trim())
+          .filter(p => p !== '')
+          .map(p => parseInt(p, 10))
+          .filter(p => !isNaN(p) && p >= 1 && p <= 5);
+
+        if (positions.length === 0) continue;
+
+        let tumblePositions = [];
+        if (tumblePart && tumblePart.trim().length > 0) {
+          const nums = tumblePart.match(/\d+/g) || [];
+          tumblePositions = nums
+            .map(n => parseInt(n, 10))
+            .filter(p => [1, 3, 5].includes(p));
+        }
+
+        dancers.push({
+          name,
+          positions,
+          tumblePositions,
+          count: 0
+        });
+      }
+
+      return dancers;
+    }
+
+    function generateSchedule(dancers, numDances) {
+      const numPositions = 5;
+      const schedule = [];
+
+      for (let d = 0; d < numDances; d++) {
+        const dance = {};
+        const usedThisDance = new Set();
+
+        for (let pos = 1; pos <= numPositions; pos++) {
+          // Base eligible: can do this position and not already used in this dance
+          let eligible = dancers.filter(person =>
+            person.positions.includes(pos) && !usedThisDance.has(person.name)
+          );
+
+          if (eligible.length === 0) {
+            dance[pos] = '(none)';
+            continue;
+          }
+
+          // For positions 1,3,5: prefer tumblers if any available
+          let candidatePool = eligible;
+          if ([1, 3, 5].includes(pos)) {
+            const tumbleEligible = eligible.filter(person =>
+              person.tumblePositions && person.tumblePositions.includes(pos)
+            );
+            if (tumbleEligible.length > 0) {
+              candidatePool = tumbleEligible;
+            }
+          }
+
+          // Fairness: pick lowest total count, tie-break by name
+          candidatePool.sort((a, b) => {
+            if (a.count !== b.count) return a.count - b.count;
+            return a.name.localeCompare(b.name);
+          });
+
+          const chosen = candidatePool[0];
+          dance[pos] = chosen.name;
+          chosen.count++;
+          usedThisDance.add(chosen.name);
+        }
+
+        schedule.push(dance);
+      }
+
+      return schedule;
+    }
+
+    function renderResults(schedule, dancers) {
+      const wrapper = document.getElementById('results');
+      wrapper.innerHTML = '';
+
+      if (schedule.length === 0) return;
+
+      const numPositions = 5;
+
+      // Main schedule table
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      const headRow = document.createElement('tr');
+
+      let th = document.createElement('th');
+      th.textContent = 'Dance';
+      headRow.appendChild(th);
+
+      for (let pos = 1; pos <= numPositions; pos++) {
+        th = document.createElement('th');
+        th.textContent = 'Pos ' + pos;
+        headRow.appendChild(th);
+      }
+
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+
+      schedule.forEach((dance, index) => {
+        const row = document.createElement('tr');
+        const danceCell = document.createElement('td');
+        danceCell.textContent = index + 1;
+        row.appendChild(danceCell);
+
+        for (let pos = 1; pos <= numPositions; pos++) {
+          const cell = document.createElement('td');
+          const name = dance[pos];
+
+          if (!name || name === '(none)') {
+            cell.textContent = '(none)';
+          } else {
+            const info = dancers.find(d => d.name === name);
+            const canTumbleHere =
+              info &&
+              info.tumblePositions &&
+              info.tumblePositions.includes(pos) &&
+              [1, 3, 5].includes(pos);
+
+            // Mark tumble-capable positions with a star
+            cell.textContent = canTumbleHere ? name + ' ★' : name;
+          }
+
+          row.appendChild(cell);
+        }
+
+        tbody.appendChild(row);
+      });
+
+      table.appendChild(tbody);
+      wrapper.appendChild(table);
+
+      // Dances-per-dancer summary
+      const heading = document.createElement('h2');
+      heading.textContent = 'Dances per dancer';
+      wrapper.appendChild(heading);
+
+      const countsTable = document.createElement('table');
+      countsTable.className = 'counts-table';
+
+      const countsHead = document.createElement('thead');
+      const countsHeadRow = document.createElement('tr');
+      ['Dancer', 'Total dances'].forEach(text => {
+        const cth = document.createElement('th');
+        cth.textContent = text;
+        countsHeadRow.appendChild(cth);
+      });
+      countsHead.appendChild(countsHeadRow);
+      countsTable.appendChild(countsHead);
+
+      const countsBody = document.createElement('tbody');
+      dancers
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .forEach(d => {
+          const row = document.createElement('tr');
+          const nameCell = document.createElement('td');
+          nameCell.textContent = d.name;
+          const countCell = document.createElement('td');
+          countCell.textContent = d.count;
+          row.appendChild(nameCell);
+          row.appendChild(countCell);
+          countsBody.appendChild(row);
+        });
+      countsTable.appendChild(countsBody);
+      wrapper.appendChild(countsTable);
+
+      const note = document.createElement('p');
+      note.className = 'small';
+      note.textContent =
+        'Cells marked with ★ are tumble-capable in that position. ' +
+        'You can decide per dance whether to use single (3), double (1 & 5), or no tumble.';
+      wrapper.appendChild(note);
+    }
+
+    document.getElementById('generateBtn').addEventListener('click', () => {
+      const message = document.getElementById('message');
+      message.textContent = '';
+
+      const dancersText = document.getElementById('dancersInput').value;
+      const numDances = parseInt(document.getElementById('numDances').value, 10);
+
+      if (isNaN(numDances) || numDances < 1) {
+        message.textContent = 'Please enter a valid number of dances.';
+        return;
+      }
+
+      saveConfig(dancersText, numDances);
+
+      const dancers = parseDancers(dancersText);
+
+      if (dancers.length === 0) {
+        message.textContent = 'No valid dancers found. Check the format.';
+        return;
+      }
+
+      const schedule = generateSchedule(dancers, numDances);
+
+      const totalSlots = numDances * 5;
+      const filledSlots = schedule.reduce((acc, dance) => {
+        for (let pos = 1; pos <= 5; pos++) {
+          if (dance[pos] && dance[pos] !== '(none)') acc++;
+        }
+        return acc;
+      }, 0);
+
+      if (filledSlots < totalSlots) {
+        message.textContent =
+          'Warning: Not enough compatible dancers to fill every position. Some slots are empty.';
+      }
+
+      renderResults(schedule, dancers);
+    });
+
+    window.addEventListener('load', () => {
+      loadConfig();
+
+      // Register service worker for PWA/offline
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('service-worker.js').catch(() => {
+          // ignore registration errors
+        });
+      }
+    });
+  </script>
+</body>
+</html>
